@@ -28,6 +28,14 @@ CONNECT_ATTEMPTS = 5  # establish_connection retries while the AppLoader boots
 # Commands reliable.)
 WINDOW = 1
 
+# Window used in "fast" mode — only safe on a DIRECT connection (no Bluetooth
+# proxy), where the OS socket backpressures write-without-response so chunks are
+# never silently dropped. Sends FAST_WINDOW-1 chunks write-without-response then
+# one acked write; the ATT ack both confirms delivery and paces the sender so the
+# AppLoader's receive buffer can drain. Kept modest because the AppLoader still
+# flashes each chunk synchronously — too large a burst can overrun its RX buffer.
+FAST_WINDOW = 8
+
 # A Bluetooth proxy returns "Congested" when its BLE TX buffer fills under the
 # write burst. It means "slow down", not failure — back off and resend the chunk.
 CONGESTION_RETRIES = 6

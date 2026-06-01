@@ -10,6 +10,7 @@ from silabs_ble_ota import SilabsOTAError, perform_silabs_ota
 from silabs_ble_ota._const import (
     APPLOADER_BOOT_DELAY,
     CHUNK_SIZE,
+    FAST_WINDOW,
     OTA_CONTROL_UUID,
     OTA_DATA_UUID,
     WINDOW,
@@ -98,6 +99,26 @@ async def test_windowed_flow_control() -> None:
     synced = [i for i, c in enumerate(data_calls, start=1) if c.kwargs["response"] is True]
     expected = sorted(set(range(WINDOW, n_chunks + 1, WINDOW)) | {n_chunks})
     assert synced == expected
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_uses_larger_window() -> None:
+    """fast=True syncs only every FAST_WINDOW chunks (plus the last); the rest are
+    write-without-response — the speedup over the proxy-safe every-chunk-acked mode."""
+    n_chunks = FAST_WINDOW * 2 + 3
+    gbl = b"\x00" * (CHUNK_SIZE * n_chunks)
+    client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
+
+    with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
+        await perform_silabs_ota(gbl, _make_ble_device(), fast=True)
+
+    data_calls = [c for c in client.write_gatt_char.call_args_list if c.args[0] == OTA_DATA_UUID]
+    assert len(data_calls) == n_chunks
+    synced = [i for i, c in enumerate(data_calls, start=1) if c.kwargs["response"] is True]
+    expected = sorted(set(range(FAST_WINDOW, n_chunks + 1, FAST_WINDOW)) | {n_chunks})
+    assert synced == expected
+    # The majority are write-without-response — that is where the speedup comes from.
+    assert any(c.kwargs["response"] is False for c in data_calls)
 
 
 @pytest.mark.asyncio

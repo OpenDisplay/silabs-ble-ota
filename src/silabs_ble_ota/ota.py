@@ -18,6 +18,7 @@ from ._const import (
     CONGESTION_BACKOFF,
     CONGESTION_RETRIES,
     CONNECT_ATTEMPTS,
+    FAST_WINDOW,
     OTA_CONTROL_UUID,
     OTA_DATA_UUID,
     WINDOW,
@@ -35,6 +36,8 @@ async def perform_silabs_ota(
     ble_device: BLEDevice,
     on_progress: ProgressCallback | None = None,
     on_log: LogCallback | None = None,
+    *,
+    fast: bool = False,
 ) -> None:
     """Flash an EFR32 device that is in the Silicon Labs AppLoader.
 
@@ -54,6 +57,12 @@ async def perform_silabs_ota(
         ble_device: The device in (or booting into) the AppLoader, same address.
         on_progress: Optional callback with float percentage 0–100.
         on_log: Optional callback for human-readable status messages.
+        fast: Use the larger write-without-response window (``FAST_WINDOW``) for a
+            much faster transfer. Only safe on a **direct** connection (no
+            Bluetooth proxy), where the OS socket backpressures write commands.
+            Leave ``False`` (every chunk acked) when flashing through an ESPHome
+            Bluetooth proxy, which can silently drop write-without-response chunks
+            and corrupt the image. Defaults to ``False``.
 
     Raises:
         SilabsOTAError: Connection or transfer failed, or the device is not in
@@ -61,6 +70,7 @@ async def perform_silabs_ota(
     """
     log: LogCallback = on_log or (lambda _: None)
     file_size = len(gbl_bytes)
+    window = FAST_WINDOW if fast else WINDOW
 
     # Brief pause to let the device begin booting into the AppLoader before the
     # first connect. establish_connection then retries the connect itself —
@@ -94,21 +104,23 @@ async def perform_silabs_ota(
                 "OTA mode); re-trigger the bootloader and retry."
             )
 
-        log("Connected to AppLoader. Starting OTA transfer…")
+        mode = f"fast (window={window})" if fast else "proxy-safe (every chunk acked)"
+        log(f"Connected to AppLoader. Starting OTA transfer — {mode}…")
         await client.write_gatt_char(OTA_CONTROL_UUID, bytearray([0x00]), response=True)
 
-        # Stream the GBL. With WINDOW=1 every chunk is write-with-response, which
+        # Stream the GBL. With window=1 every chunk is write-with-response, which
         # is required over a Bluetooth proxy (write-without-response can be
-        # silently dropped, yielding an incomplete image that fails finalize). The
-        # final chunk is always synced so all data is acked before the 0x03
-        # finalize.
+        # silently dropped, yielding an incomplete image that fails finalize). In
+        # fast mode (direct connection only) we send window-1 chunks
+        # write-without-response then one acked write. The final chunk is always
+        # synced so all data is acked before the 0x03 finalize.
         sent = 0
         index = 0
         while sent < file_size:
             chunk = gbl_bytes[sent : sent + CHUNK_SIZE]
             sent += len(chunk)
             index += 1
-            sync = index % WINDOW == 0 or sent >= file_size
+            sync = index % window == 0 or sent >= file_size
             # Resend on proxy congestion ("Congested" = TX buffer full): the write
             # was not delivered, so back off briefly and retry the same chunk.
             for congestion_attempt in range(CONGESTION_RETRIES):
