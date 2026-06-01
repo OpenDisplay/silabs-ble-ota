@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "silabs-ble-ota"
+version = "0.1.0"
+description = "Python library for OTA firmware updates on Silicon Labs EFR32 devices over BLE (AppLoader)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    {name = "g4bri3lDev", email = "admin@g4bri3l.de"}
+]
+
+keywords = ["bluetooth", "ble", "silabs", "efr32", "gbl", "ota", "firmware", "apploader"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Hardware",
+]
+
+# Transport-agnostic: takes a bleak BLEDevice and uses bleak-retry-connector's
+# establish_connection, so the same code flashes over a direct adapter or an
+# ESPHome Bluetooth proxy (the proxy is selected by Home Assistant / the caller).
+dependencies = [
+    "bleak>=1.0.1",
+    "bleak-retry-connector>=3.5.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.14.10",
+]
+
+[project.urls]
+Homepage = "https://opendisplay.org"
+Repository = "https://github.com/OpenDisplay/silabs-ble-ota"
+Documentation = "https://github.com/OpenDisplay/silabs-ble-ota#readme"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/silabs_ble_ota"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
