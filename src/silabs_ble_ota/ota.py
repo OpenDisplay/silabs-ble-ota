@@ -19,6 +19,8 @@ from ._const import (
     CONGESTION_RETRIES,
     CONNECT_ATTEMPTS,
     FAST_WINDOW,
+    GBL_MAGIC,
+    MIN_GBL_SIZE,
     OTA_CONTROL_UUID,
     OTA_DATA_UUID,
     WINDOW,
@@ -65,12 +67,30 @@ async def perform_silabs_ota(
             and corrupt the image. Defaults to ``False``.
 
     Raises:
-        SilabsOTAError: Connection or transfer failed, or the device is not in
-            Silabs OTA mode.
+        SilabsOTAError: ``gbl_bytes`` is not a valid GBL image (bad magic or too
+            small — checked before connecting, so the device is left untouched), the
+            connection or transfer failed, or the device is not in Silabs OTA mode.
     """
     log: LogCallback = on_log or (lambda _: None)
     file_size = len(gbl_bytes)
     window = FAST_WINDOW if fast else WINDOW
+
+    # Validate the image BEFORE connecting/erasing. AppLoader OTA is single-bank and
+    # in-place: writing 0x00 erases the app slot, so a bad image (truncated download,
+    # HTML error page, .hex, nRF .zip) would leave the device app-less. Reject it here
+    # while the app is still intact.
+    if file_size < MIN_GBL_SIZE:
+        raise SilabsOTAError(
+            f"Firmware is too small to be a valid GBL image ({file_size} bytes; "
+            f"expected at least {MIN_GBL_SIZE}). Refusing to erase the device — "
+            "check the firmware download."
+        )
+    if not gbl_bytes.startswith(GBL_MAGIC):
+        raise SilabsOTAError(
+            "Firmware is not a valid GBL image (missing GBL header magic "
+            f"{GBL_MAGIC.hex(' ').upper()}). Refusing to erase the device — the file may "
+            "be a truncated download, an error page, or the wrong format (.hex/.zip)."
+        )
 
     # Brief pause to let the device begin booting into the AppLoader before the
     # first connect. establish_connection then retries the connect itself —

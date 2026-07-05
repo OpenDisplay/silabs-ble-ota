@@ -10,6 +10,17 @@ from collections.abc import Callable
 OTA_CONTROL_UUID = "f7bf3564-fb6d-4e53-88a4-5e37e0326063"  # write 0x00 = start, 0x03 = finalize
 OTA_DATA_UUID = "984227f3-34fc-4045-a5d0-2c581f81a153"  # GBL data sink
 
+# Every GBL image begins with the header tag GBL_TAG_ID_HEADER_V3 (0x03A617EB),
+# stored little-endian, so the first four bytes on disk are EB 17 A6 03. Checking
+# for it up front rejects a truncated download, an HTML error page, a .hex, or an
+# nRF .zip *before* the AppLoader erases the (single-bank, in-place) app slot.
+GBL_MAGIC = b"\xeb\x17\xa6\x03"
+
+# A valid GBL carries at least a header tag (tag + length + version + type) and an
+# end tag (tag + length + CRC) — well under 64 bytes. Anything smaller cannot be a
+# real firmware image, so reject it before erasing rather than bricking the device.
+MIN_GBL_SIZE = 64
+
 CHUNK_SIZE = 244  # bytes per data write
 APPLOADER_BOOT_DELAY = 6.0  # seconds to wait before the first connect attempt
 CONNECT_ATTEMPTS = 5  # establish_connection retries while the AppLoader boots
