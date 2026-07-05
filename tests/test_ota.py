@@ -11,6 +11,8 @@ from silabs_ble_ota._const import (
     APPLOADER_BOOT_DELAY,
     CHUNK_SIZE,
     FAST_WINDOW,
+    GBL_MAGIC,
+    MIN_GBL_SIZE,
     OTA_CONTROL_UUID,
     OTA_DATA_UUID,
     WINDOW,
@@ -19,6 +21,13 @@ from silabs_ble_ota._const import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _gbl(size: int) -> bytes:
+    """A blob of exactly ``size`` bytes that passes GBL validation: header magic
+    followed by zero padding."""
+    assert size >= MIN_GBL_SIZE
+    return GBL_MAGIC + b"\x00" * (size - len(GBL_MAGIC))
 
 
 def _make_client(char_uuids: list[str]) -> MagicMock:
@@ -53,7 +62,7 @@ def _patch_connect(client_or_exc: object) -> object:
 @pytest.mark.asyncio
 async def test_happy_path() -> None:
     """Full transfer: start write, data chunks, finalize write, disconnect."""
-    gbl = bytes(range(256)) * 2  # 512 bytes → 3 chunks of 244/244/24
+    gbl = _gbl(512)  # 512 bytes → 3 chunks of 244/244/24
     client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
     progress: list[float] = []
     connect = AsyncMock(return_value=client)
@@ -88,7 +97,7 @@ async def test_happy_path() -> None:
 async def test_windowed_flow_control() -> None:
     """Data chunks sync (response=True) every WINDOW chunks and on the last chunk."""
     n_chunks = WINDOW * 2 + 3
-    gbl = b"\x00" * (CHUNK_SIZE * n_chunks)
+    gbl = _gbl(CHUNK_SIZE * n_chunks)
     client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
 
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
@@ -106,7 +115,7 @@ async def test_fast_mode_uses_larger_window() -> None:
     """fast=True syncs only every FAST_WINDOW chunks (plus the last); the rest are
     write-without-response — the speedup over the proxy-safe every-chunk-acked mode."""
     n_chunks = FAST_WINDOW * 2 + 3
-    gbl = b"\x00" * (CHUNK_SIZE * n_chunks)
+    gbl = _gbl(CHUNK_SIZE * n_chunks)
     client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
 
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
@@ -135,7 +144,7 @@ async def test_retries_on_congestion() -> None:
     client.write_gatt_char = AsyncMock(side_effect=write)
 
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
-        await perform_silabs_ota(b"\x00" * (CHUNK_SIZE * 2), _make_ble_device())
+        await perform_silabs_ota(_gbl(CHUNK_SIZE * 2), _make_ble_device())
 
     assert fails["n"] == 2  # first data chunk resent twice then succeeded
 
@@ -147,7 +156,7 @@ async def test_waits_for_apploader_boot() -> None:
     client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
 
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=sleep_mock), _patch_connect(client):
-        await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+        await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device())
 
     sleep_mock.assert_awaited_once_with(APPLOADER_BOOT_DELAY)
 
@@ -158,7 +167,7 @@ async def test_missing_control_char_raises() -> None:
     client = _make_client([OTA_DATA_UUID, "some-other-uuid"])
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
         with pytest.raises(SilabsOTAError, match="not in Silabs OTA mode"):
-            await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+            await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device())
     client.disconnect.assert_awaited_once()
 
 
@@ -168,7 +177,7 @@ async def test_missing_data_char_raises() -> None:
     client = _make_client([OTA_CONTROL_UUID])
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
         with pytest.raises(SilabsOTAError, match="not in Silabs OTA mode"):
-            await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+            await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device())
 
 
 @pytest.mark.asyncio
@@ -179,7 +188,7 @@ async def test_connect_failure_wrapped() -> None:
         _patch_connect(RuntimeError("connection refused")),
     ):
         with pytest.raises(SilabsOTAError, match="Could not connect to AppLoader"):
-            await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+            await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device())
 
 
 @pytest.mark.asyncio
@@ -189,7 +198,7 @@ async def test_transfer_error_wrapped() -> None:
     client.write_gatt_char = AsyncMock(side_effect=RuntimeError("gatt write failed"))
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
         with pytest.raises(SilabsOTAError, match="Silabs OTA failed"):
-            await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+            await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device())
     client.disconnect.assert_awaited_once()
 
 
@@ -198,7 +207,7 @@ async def test_no_progress_callback() -> None:
     """Works without an on_progress callback."""
     client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
-        await perform_silabs_ota(b"\x00" * 10, _make_ble_device(), on_progress=None)
+        await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device(), on_progress=None)
 
 
 @pytest.mark.asyncio
@@ -207,5 +216,52 @@ async def test_log_callback() -> None:
     client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
     logs: list[str] = []
     with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
-        await perform_silabs_ota(b"\x00" * 10, _make_ble_device(), on_log=logs.append)
+        await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device(), on_log=logs.append)
     assert any("AppLoader" in m for m in logs) and any("complete" in m.lower() for m in logs)
+
+
+# ---------------------------------------------------------------------------
+# GBL validation — must happen BEFORE connecting/erasing (single-bank, in-place)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rejects_wrong_magic_before_erase() -> None:
+    """A blob without the GBL header magic raises before any BLE connect/erase."""
+    connect = AsyncMock()
+    sleep = AsyncMock()
+    not_gbl = b"<html>error</html>" + b"\x00" * MIN_GBL_SIZE  # right size, wrong magic
+    with (
+        patch("silabs_ble_ota.ota.asyncio.sleep", new=sleep),
+        patch("silabs_ble_ota.ota.establish_connection", new=connect),
+    ):
+        with pytest.raises(SilabsOTAError, match="not a valid GBL image"):
+            await perform_silabs_ota(not_gbl, _make_ble_device())
+    connect.assert_not_awaited()  # never connected → device app slot untouched
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rejects_too_short_before_erase() -> None:
+    """A too-short blob (even with the magic) raises before any BLE connect/erase."""
+    connect = AsyncMock()
+    with (
+        patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()),
+        patch("silabs_ble_ota.ota.establish_connection", new=connect),
+    ):
+        with pytest.raises(SilabsOTAError, match="too small"):
+            await perform_silabs_ota(GBL_MAGIC, _make_ble_device())
+        with pytest.raises(SilabsOTAError, match="too small"):
+            await perform_silabs_ota(b"", _make_ble_device())
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_valid_magic_passes_validation() -> None:
+    """A blob with the correct magic and sane size passes validation and transfers."""
+    client = _make_client([OTA_CONTROL_UUID, OTA_DATA_UUID])
+    with patch("silabs_ble_ota.ota.asyncio.sleep", new=AsyncMock()), _patch_connect(client):
+        await perform_silabs_ota(_gbl(MIN_GBL_SIZE), _make_ble_device())
+    # 0x00 start-erase was written → validation let the transfer proceed.
+    control = [c for c in client.write_gatt_char.call_args_list if c.args[0] == OTA_CONTROL_UUID]
+    assert control[0].args[1] == bytearray([0x00])
