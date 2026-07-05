@@ -34,17 +34,6 @@ dependencies = [
     "bleak-retry-connector>=3.5.0",
 ]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=9.0.2",
-    "pytest-cov>=7.0.0",
-    "pytest-asyncio>=0.23.0",
-]
-dev = [
-    "mypy>=1.19.1",
-    "ruff>=0.14.10",
-]
-
 [project.urls]
 Homepage = "https://opendisplay.org"
 Repository = "https://github.com/OpenDisplay/silabs-ble-ota"
@@ -69,3 +58,15 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.14.10",
+    { include-group = "test" },
+]
+test = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+]
